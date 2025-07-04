@@ -1,176 +1,208 @@
-// homebridge-smartthings-washer v1.0.0
+// index.js v1.0.1 (for Washer)
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
 const pkg = require('./package.json');
+const http = require('http');
+const url = require('url');
 
 let Accessory, Service, Characteristic, UUIDGen;
+
+const PLATFORM_NAME = 'SmartThingsWasher';
+const PLUGIN_NAME = 'homebridge-smartthings-washer';
 
 const normalizeKorean = s => (s || '').normalize('NFC').trim();
 
 module.exports = (homebridge) => {
-  Accessory = homebridge.platformAccessory;
-  Service = homebridge.hap.Service;
-  Characteristic = homebridge.hap.Characteristic;
-  UUIDGen = homebridge.hap.uuid;
+    Accessory = homebridge.platformAccessory;
+    Service = homebridge.hap.Service;
+    Characteristic = homebridge.hap.Characteristic;
+    UUIDGen = homebridge.hap.uuid;
 
-  homebridge.registerPlatform('homebridge-smartthings-washer', 'SmartThingsWasher', SmartThingsWasherPlatform);
+    homebridge.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, SmartThingsWasherPlatform);
 };
 
 class SmartThingsWasherPlatform {
-  constructor(log, config, api) {
-    this.log = log;
-    this.config = config;
-    this.api = api;
-    this.accessories = [];
+    constructor(log, config, api) {
+        this.log = log;
+        this.config = config;
+        this.api = api;
+        this.accessories = [];
+        this.server = null;
 
-    if (!config) {
-      this.log.warn('설정이 없습니다. 플러그인을 비활성화합니다.');
-      return;
+        if (!config || !config.clientId || !config.clientSecret || !config.redirectUri) {
+            this.log.error('인증 정보(clientId, clientSecret, redirectUri)가 모두 설정되어야 합니다.');
+            return;
+        }
+
+        this.smartthings = new SmartThings(this.log, this.api, this.config);
+
+        if (this.api) {
+            this.log.info('SmartThings 세탁기/건조기 플랫폼 초기화 중...');
+            this.api.on('didFinishLaunching', async () => {
+                this.log.info('Homebridge 실행 완료. 인증 상태 확인 및 장치 검색을 시작합니다.');
+                const hasToken = await this.smartthings.init();
+                if (hasToken) {
+                    await this.discoverDevices();
+                } else {
+                    this.startAuthServer();
+                }
+            });
+        }
     }
-    if (!config.token) {
-      this.log.error('SmartThings 토큰이 설정되지 않았습니다. config.json을 확인해주세요.');
-      return;
+
+    startAuthServer() {
+        if (this.server) this.server.close();
+        
+        const listenPort = new url.URL(this.config.redirectUri).port || 8999;
+        this.server = http.createServer(async (req, res) => {
+            const reqUrl = url.parse(req.url, true);
+            if (req.method === 'GET' && reqUrl.pathname === new url.URL(this.config.redirectUri).pathname) {
+                const code = reqUrl.query.code;
+                if (code) {
+                    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                    res.end('<h1>인증 성공!</h1><p>이 창을 닫고 Homebridge를 재시작해주세요.</p>');
+                    this.log.info('인증 코드를 수신했습니다. 토큰을 발급받습니다...');
+                    try {
+                        await this.smartthings.getInitialTokens(code);
+                        this.log.info('최초 토큰 발급 완료! Homebridge를 재시작하면 장치가 연동됩니다.');
+                        if (this.server) this.server.close();
+                    } catch (e) {
+                        this.log.error('토큰 발급 중 오류:', e.message);
+                    }
+                } else {
+                    res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+                    res.end('<h1>인증 실패</h1><p>URL에서 인증 코드를 찾을 수 없습니다.</p>');
+                }
+            } else {
+                res.writeHead(404).end();
+            }
+        }).listen(listenPort, () => {
+            const scope = 'r:devices:* x:devices:*';
+            const authUrl = `https://api.smartthings.com/oauth/authorize?client_id=${this.config.clientId}&scope=${encodeURIComponent(scope)}&response_type=code&redirect_uri=${encodeURIComponent(this.config.redirectUri)}`;
+            this.log.warn('====================[ 스마트싱스 인증 필요 ]====================');
+            this.log.warn(`인증 서버가 포트 ${listenPort}에서 실행 중입니다. 아래 URL에 접속하여 권한을 허용해주세요.`);
+            this.log.warn(`인증 URL: ${authUrl}`);
+            this.log.warn('================================================================');
+        });
+        this.server.on('error', (e) => { this.log.error(`인증 서버 오류: ${e.message}`); });
     }
-    if (!config.devices || !Array.isArray(config.devices) || config.devices.length === 0) {
-      this.log.error('연동할 디바이스가 설정되지 않았습니다. config.json의 "devices" 배열을 확인해주세요.');
-      return;
+
+    configureAccessory(accessory) {
+        this.log.info(`캐시된 액세서리 불러오기: ${accessory.displayName}`);
+        this.accessories.push(accessory);
     }
 
-    this.smartthings = new SmartThings(config.token, this.log);
-
-    if (this.api) {
-      this.log.info('SmartThings 세탁기/건조기 플랫폼 초기화 중...');
-      this.api.on('didFinishLaunching', async () => {
-        this.log.info('Homebridge 실행 완료. 장치 검색을 시작합니다.');
-        await this.discoverDevices();
-      });
+    async discoverDevices() {
+        this.log.info('SmartThings에서 장치 목록을 가져오는 중...');
+        try {
+            const stDevices = await this.smartthings.getDevices();
+            this.log.info(`총 ${stDevices.length}개의 SmartThings 장치를 발견했습니다.`);
+            
+            for (const configDevice of this.config.devices) {
+                const targetLabel = normalizeKorean(configDevice.deviceLabel);
+                const foundDevice = stDevices.find(stDevice => normalizeKorean(stDevice.label) === targetLabel);
+                if (foundDevice) {
+                    this.log.info(`'${configDevice.deviceLabel}' 장치를 찾았습니다. HomeKit에 추가/갱신합니다.`);
+                    this.addOrUpdateAccessory(foundDevice);
+                } else {
+                    this.log.warn(`'${configDevice.deviceLabel}'에 해당하는 장치를 SmartThings에서 찾지 못했습니다.`);
+                }
+            }
+        } catch (e) {
+            this.log.error('장치 검색 중 오류가 발생했습니다:', e.message);
+        }
     }
-  }
 
-  configureAccessory(accessory) {
-    this.log.info(`캐시된 액세서리 불러오기: ${accessory.displayName}`);
-    this.accessories.push(accessory);
-  }
+    addOrUpdateAccessory(device) {
+        const uuid = UUIDGen.generate(device.deviceId);
+        let accessory = this.accessories.find(acc => acc.UUID === uuid);
 
-  async discoverDevices() {
-    this.log.info('SmartThings에서 장치 목록을 가져오는 중...');
-    try {
-      const stDevices = await this.smartthings.getDevices();
-      const configDevices = this.config.devices;
-
-      this.log.info(`총 ${stDevices.length}개의 SmartThings 장치를 발견했습니다. 설정된 장치와 비교합니다.`);
-
-      for (const configDevice of configDevices) {
-        const targetLabel = normalizeKorean(configDevice.deviceLabel);
-        const foundDevice = stDevices.find(stDevice => normalizeKorean(stDevice.label) === targetLabel);
-
-        if (foundDevice) {
-          this.log.info(`'${configDevice.deviceLabel}' 장치를 찾았습니다. HomeKit에 추가/갱신합니다.`);
-          this.addOrUpdateAccessory(foundDevice);
+        if (accessory) {
+            this.log.info(`기존 액세서리 갱신: ${device.label}`);
+            accessory.context.device = device;
         } else {
-          this.log.warn(`'${configDevice.deviceLabel}'에 해당하는 장치를 SmartThings에서 찾지 못했습니다.`);
+            this.log.info(`새 액세서리 등록: ${device.label}`);
+            accessory = new Accessory(device.label, uuid);
+            accessory.context.device = device;
+            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+            this.accessories.push(accessory);
         }
-      }
-    } catch (e) {
-      this.log.error('장치 검색 중 심각한 오류가 발생했습니다:', e.message);
+
+        accessory.getService(Service.AccessoryInformation)
+            .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
+            .setCharacteristic(Characteristic.Model, 'Washer/Dryer')
+            .setCharacteristic(Characteristic.SerialNumber, device.deviceId)
+            .setCharacteristic(Characteristic.FirmwareRevision, pkg.version);
+
+        this.setupValveService(accessory);
     }
-  }
-
-  addOrUpdateAccessory(device) {
-    const uuid = UUIDGen.generate(device.deviceId);
-    let accessory = this.accessories.find(acc => acc.UUID === uuid);
-
-    if (accessory) {
-      this.log.info(`기존 액세서리 갱신: ${device.label}`);
-      accessory.context.device = device;
-    } else {
-      this.log.info(`새 액세서리 등록: ${device.label}`);
-      accessory = new Accessory(device.label, uuid);
-      accessory.context.device = device;
-      this.api.registerPlatformAccessories('homebridge-smartthings-washer', 'SmartThingsWasher', [accessory]);
-      this.accessories.push(accessory);
+    
+    _bindCharacteristic({ service, characteristic, getter }) {
+        const char = service.getCharacteristic(characteristic);
+        char.removeAllListeners('get'); // 기존 get 리스너 제거
+        char.on('get', async (callback) => {
+            try {
+                const value = await getter();
+                callback(null, value);
+            } catch (e) {
+                this.log.error(`[${service.displayName}] ${characteristic.displayName} GET 오류: ${e.message}. 기본값으로 처리합니다.`);
+                // 오프라인/오류 시 '꺼짐'에 해당하는 기본값 반환
+                switch(characteristic) {
+                    case Characteristic.Active:
+                        callback(null, Characteristic.Active.INACTIVE);
+                        break;
+                    case Characteristic.InUse:
+                        callback(null, Characteristic.InUse.NOT_IN_USE);
+                        break;
+                    case Characteristic.RemainingDuration:
+                        callback(null, 0);
+                        break;
+                    default:
+                        callback(e); // 그 외의 경우는 에러 전달
+                }
+            }
+        });
     }
 
-    accessory.getService(Service.AccessoryInformation)
-      .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
-      .setCharacteristic(Characteristic.Model, 'Washer/Dryer')
-      .setCharacteristic(Characteristic.SerialNumber, device.deviceId)
-      .setCharacteristic(Characteristic.FirmwareRevision, pkg.version);
+    setupValveService(accessory) {
+        const deviceId = accessory.context.device.deviceId;
+        const service = accessory.getService(Service.Valve) || accessory.addService(Service.Valve, accessory.displayName);
+        service.setCharacteristic(Characteristic.ValveType, Characteristic.ValveType.WATER_FAUCET);
 
-    this.setupValveService(accessory);
-  }
+        this._bindCharacteristic({
+            service,
+            characteristic: Characteristic.Active,
+            getter: async () => {
+                const status = await this.smartthings.getStatus(deviceId);
+                const opState = status.washerOperatingState || status.dryerOperatingState;
+                const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
+                return jobState === 'running' ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+            },
+        });
 
-  setupValveService(accessory) {
-    const deviceId = accessory.context.device.deviceId;
-    const service = accessory.getService(Service.Valve) || accessory.addService(Service.Valve, accessory.displayName);
+        this._bindCharacteristic({
+            service,
+            characteristic: Characteristic.InUse,
+            getter: async () => {
+                const status = await this.smartthings.getStatus(deviceId);
+                const opState = status.washerOperatingState || status.dryerOperatingState;
+                const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
+                return jobState === 'running' ? Characteristic.InUse.IN_USE : Characteristic.InUse.NOT_IN_USE;
+            },
+        });
 
-    service.setCharacteristic(Characteristic.ValveType, Characteristic.ValveType.WATER_FAUCET);
-
-    // --- '활성' 상태 (세탁/건조 중인지) ---
-    service.getCharacteristic(Characteristic.Active)
-      .on('get', async (callback) => {
-        try {
-          const status = await this.smartthings.getStatus(deviceId);
-          const opState = status.washerOperatingState || status.dryerOperatingState;
-          const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
-          
-          this.log.info(`[${accessory.displayName}] 현재 작동 상태: ${jobState}`);
-          const isActive = jobState === 'running';
-          callback(null, isActive ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE);
-        } catch (e) {
-          this.log.error(`[${accessory.displayName}] Active 상태 GET 오류: ${e.message}. '꺼짐' 상태로 처리합니다.`);
-          // 오류 발생 시 '꺼짐'으로 처리
-          callback(null, Characteristic.Active.INACTIVE);
-        }
-      });
-
-    // --- '사용 중' 상태 (활성과 동일하게 연동) ---
-    service.getCharacteristic(Characteristic.InUse)
-      .on('get', async (callback) => {
-        try {
-          const status = await this.smartthings.getStatus(deviceId);
-          const opState = status.washerOperatingState || status.dryerOperatingState;
-          const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
-
-          const isInUse = jobState === 'running';
-          callback(null, isInUse ? Characteristic.InUse.IN_USE : Characteristic.InUse.NOT_IN_USE);
-        } catch (e) {
-          this.log.error(`[${accessory.displayName}] InUse 상태 GET 오류: ${e.message}. '사용 안함' 상태로 처리합니다.`);
-          // 오류 발생 시 '사용 안함'으로 처리
-          callback(null, Characteristic.InUse.NOT_IN_USE);
-        }
-      });
-
-    // --- '남은 시간' ---
-    service.getCharacteristic(Characteristic.RemainingDuration)
-      .on('get', async (callback) => {
-        try {
-          const status = await this.smartthings.getStatus(deviceId);
-          const opState = status.washerOperatingState || status.dryerOperatingState;
-          const completionTimeStr = opState?.completionTime?.value;
-
-          if (!completionTimeStr) {
-            this.log.info(`[${accessory.displayName}] 완료 예정 시간이 없습니다.`);
-            return callback(null, 0);
-          }
-
-          const completionTime = new Date(completionTimeStr);
-          const now = new Date();
-          const remainingSeconds = Math.round((completionTime - now) / 1000);
-
-          if (remainingSeconds < 0) {
-            this.log.info(`[${accessory.displayName}] 완료 시간이 이미 지났습니다.`);
-            return callback(null, 0);
-          }
-          
-          this.log.info(`[${accessory.displayName}] 남은 시간: ${remainingSeconds}초`);
-          callback(null, remainingSeconds);
-        } catch (e) {
-          this.log.error(`[${accessory.displayName}] 남은 시간 GET 오류: ${e.message}. '0'으로 처리합니다.`);
-          // 오류 발생 시 남은 시간 '0'으로 처리
-          callback(null, 0);
-        }
-      });
-  }
+        this._bindCharacteristic({
+            service,
+            characteristic: Characteristic.RemainingDuration,
+            getter: async () => {
+                const status = await this.smartthings.getStatus(deviceId);
+                const opState = status.washerOperatingState || status.dryerOperatingState;
+                const completionTimeStr = opState?.completionTime?.value;
+                if (!completionTimeStr) return 0;
+                const remainingSeconds = Math.round((new Date(completionTimeStr) - Date.now()) / 1000);
+                return remainingSeconds > 0 ? remainingSeconds : 0;
+            },
+        });
+    }
 }
