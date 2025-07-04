@@ -1,4 +1,4 @@
-// index.js v1.0.1 (for Washer)
+// index.js v1.0.2 (for Washer)
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
@@ -104,7 +104,7 @@ class SmartThingsWasherPlatform {
                 const foundDevice = stDevices.find(stDevice => normalizeKorean(stDevice.label) === targetLabel);
                 if (foundDevice) {
                     this.log.info(`'${configDevice.deviceLabel}' 장치를 찾았습니다. HomeKit에 추가/갱신합니다.`);
-                    this.addOrUpdateAccessory(foundDevice);
+                    this.addOrUpdateAccessory(foundDevice, configDevice); // configDevice 전달
                 } else {
                     this.log.warn(`'${configDevice.deviceLabel}'에 해당하는 장치를 SmartThings에서 찾지 못했습니다.`);
                 }
@@ -114,25 +114,27 @@ class SmartThingsWasherPlatform {
         }
     }
 
-    addOrUpdateAccessory(device) {
+    addOrUpdateAccessory(device, configDevice) { // configDevice 파라미터 추가
         const uuid = UUIDGen.generate(device.deviceId);
         let accessory = this.accessories.find(acc => acc.UUID === uuid);
 
         if (accessory) {
             this.log.info(`기존 액세서리 갱신: ${device.label}`);
             accessory.context.device = device;
+            accessory.context.configDevice = configDevice; // context에도 저장
         } else {
             this.log.info(`새 액세서리 등록: ${device.label}`);
             accessory = new Accessory(device.label, uuid);
             accessory.context.device = device;
+            accessory.context.configDevice = configDevice; // context에도 저장
             this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
             this.accessories.push(accessory);
         }
 
         accessory.getService(Service.AccessoryInformation)
             .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
-            .setCharacteristic(Characteristic.Model, 'Washer/Dryer')
-            .setCharacteristic(Characteristic.SerialNumber, device.deviceId)
+            .setCharacteristic(Characteristic.Model, configDevice.model || 'Washer/Dryer')
+            .setCharacteristic(Characteristic.SerialNumber, configDevice.serialNumber || device.deviceId)
             .setCharacteristic(Characteristic.FirmwareRevision, pkg.version);
 
         this.setupValveService(accessory);
@@ -140,14 +142,13 @@ class SmartThingsWasherPlatform {
     
     _bindCharacteristic({ service, characteristic, getter }) {
         const char = service.getCharacteristic(characteristic);
-        char.removeAllListeners('get'); // 기존 get 리스너 제거
+        char.removeAllListeners('get');
         char.on('get', async (callback) => {
             try {
                 const value = await getter();
                 callback(null, value);
             } catch (e) {
                 this.log.error(`[${service.displayName}] ${characteristic.displayName} GET 오류: ${e.message}. 기본값으로 처리합니다.`);
-                // 오프라인/오류 시 '꺼짐'에 해당하는 기본값 반환
                 switch(characteristic) {
                     case Characteristic.Active:
                         callback(null, Characteristic.Active.INACTIVE);
@@ -159,7 +160,7 @@ class SmartThingsWasherPlatform {
                         callback(null, 0);
                         break;
                     default:
-                        callback(e); // 그 외의 경우는 에러 전달
+                        callback(e);
                 }
             }
         });
@@ -185,10 +186,10 @@ class SmartThingsWasherPlatform {
             service,
             characteristic: Characteristic.InUse,
             getter: async () => {
-                const status = await this.smartthings.getStatus(deviceId);
-                const opState = status.washerOperatingState || status.dryerOperatingState;
-                const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
-                return jobState === 'running' ? Characteristic.InUse.IN_USE : Characteristic.InUse.NOT_IN_USE;
+                 const status = await this.smartthings.getStatus(deviceId);
+                 const opState = status.washerOperatingState || status.dryerOperatingState;
+                 const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
+                 return jobState === 'running' ? Characteristic.InUse.IN_USE : Characteristic.InUse.NOT_IN_USE;
             },
         });
 
