@@ -1,4 +1,7 @@
 {
+  "pluginAlias": "SmartThingsWasher",
+  "pluginType": "platform",
+  "singular": true,
   "schema": {
     "type": "object",
     "properties": {
@@ -8,14 +11,26 @@
         "default": "SmartThings Laundry",
         "required": true
       },
-      "token": {
-        "title": "SmartThings 개인용 액세스 토큰 (PAT)",
+      "clientId": {
+        "title": "Client ID",
         "type": "string",
-        "description": "SmartThings 개발자 워크스페이스에서 발급받은 토큰. l:devices, r:devices:* 권한이 필요합니다.",
+        "description": "SmartThings Developer Workspace에서 발급받은 Client ID",
+        "required": true
+      },
+      "clientSecret": {
+        "title": "Client Secret",
+        "type": "string",
+        "description": "SmartThings Developer Workspace에서 발급받은 Client Secret",
+        "required": true
+      },
+      "redirectUri": {
+        "title": "Redirect URI",
+        "type": "string",
+        "description": "앱 생성 시 입력했던 Redirect URI와 동일한 값 (예: http://<Homebridge IP>:8999/oauth/callback)",
         "required": true
       },
       "devices": {
-        "title": "연동할 세탁기/건조기 장치",
+        "title": "연동할 세탁기/건조기",
         "type": "array",
         "items": {
           "type": "object",
@@ -23,24 +38,12 @@
             "deviceLabel": {
               "title": "장치 이름 (SmartThings 레이블)",
               "type": "string",
-              "description": "SmartThings 앱에 등록된 세탁기 또는 건조기의 이름과 정확히 일치해야 합니다.",
+              "description": "SmartThings 앱에 등록된 장치 이름과 정확히 일치해야 합니다.",
               "required": true
             }
           }
         }
       }
     }
-  },
-  "layout": [
-    "name",
-    "token",
-    {
-      "key": "devices",
-      "type": "array",
-      "title": "장치 목록",
-      "items": [
-        "devices[].deviceLabel"
-      ]
-    }
-  ]
+  }
 }
