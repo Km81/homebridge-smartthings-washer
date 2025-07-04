@@ -1,4 +1,4 @@
-// homebridge-smartthings-washer v1.0.1
+// homebridge-smartthings-washer v1.0.0
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
@@ -142,7 +142,7 @@ class SmartThingsWasherPlatform {
         }
       });
 
-    // --- '남은 시간' (가장 중요한 기능) ---
+    // --- '남은 시간' ---
     service.getCharacteristic(Characteristic.RemainingDuration)
       .on('get', async (callback) => {
         try {
