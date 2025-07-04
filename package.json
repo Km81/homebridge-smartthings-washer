@@ -1,7 +1,7 @@
 {
   "name": "homebridge-smartthings-washer",
   "version": "1.0.0",
-  "description": "SmartThings 세탁기/건조기의 작동 상태와 남은 시간을 HomeKit에서 모니터링하는 플러그인",
+  "description": "SmartThings 세탁기/건조기 상태 모니터링 플러그인 (OAuth2.0 지원)",
   "main": "index.js",
   "scripts": {
     "test": "echo \"No test specified\" && exit 0"
@@ -14,7 +14,8 @@
     "smartthings",
     "washer",
     "dryer",
-    "samsung"
+    "samsung",
+    "oauth"
   ],
   "engines": {
     "homebridge": ">=1.6.0",
@@ -25,7 +26,8 @@
     "url": "https://github.com/Km81/homebridge-smartthings-washer.git"
   },
   "dependencies": {
-    "axios": "^1.6.8",
+    "axios": "^1.7.2",
+    "axios-retry": "^4.4.0",
     "lru-cache": "^10.2.2"
   }
 }
