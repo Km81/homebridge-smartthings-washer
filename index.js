@@ -169,7 +169,7 @@ class SmartThingsWasherPlatform {
     setupValveService(accessory) {
         const deviceId = accessory.context.device.deviceId;
         const service = accessory.getService(Service.Valve) || accessory.addService(Service.Valve, accessory.displayName);
-        service.setCharacteristic(Characteristic.ValveType, Characteristic.ValveType.IRRIGATION);
+        service.setCharacteristic(Characteristic.ValveType, Characteristic.ValveType.SHOWER_HEAD);
 
         this._bindCharacteristic({
             service,
