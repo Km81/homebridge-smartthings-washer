@@ -1,4 +1,4 @@
-// index.js v1.0.2 (for Washer)
+// index.js v1.0.3 (for Washer)
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
