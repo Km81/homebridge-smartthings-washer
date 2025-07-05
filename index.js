@@ -1,5 +1,5 @@
 // Samsung Air Conditioner & Washer/Dryer Homebridge Plugin
-// Version 1.1.0 (Component Priority & Multi-Status Support)
+// Version 1.1.1 (Component Priority & Multi-Status Support)
 'use strict';
 
 const tls = require('tls');
@@ -9,13 +9,13 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
-const PLUGIN_NAME = 'homebridge-samsung-ac';
-const PLATFORM_NAME = 'SamsungACPlatform';
+const PLUGIN_NAME = 'homebridge-smartthings-ac';
+const PLATFORM_NAME = 'SmartThingsWasher'; // config.json과 일치
 
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '1.1.0',
+    PLUGIN_VERSION: '1.1.1',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -51,7 +51,6 @@ class SamsungACPlatform {
     }
 
     async initializeDevices() {
-        // Assume single device config
         const deviceId = this.config.deviceId;
         const token = this.config.pat;
 
@@ -69,7 +68,7 @@ class SamsungACPlatform {
         service.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
             .on('get', callback => {
                 const state = mapJobStateToCurrentState(status.jobState);
-                this.log.info(`Current state: ${state}`);
+                this.log.info(`[${status.component}] Current state: ${state}`);
                 callback(null, state);
             });
 
@@ -84,10 +83,10 @@ class SamsungACPlatform {
 
 function extractBestComponentStatus(data) {
     const components = ['main', 'hca.main', 'sub'];
-    let selected = null;
     for (const key of components) {
-        if (!data.components[key]) continue;
         const c = data.components[key];
+        if (!c) continue;
+
         const jobState = c['dryerOperatingState']?.dryerJobState?.value ||
                          c['washerOperatingState']?.washerJobState?.value ||
                          c['samsungce.dryerOperatingState']?.dryerJobState?.value ||
@@ -102,7 +101,7 @@ function extractBestComponentStatus(data) {
                            c['washerOperatingState']?.completionTime?.value;
 
         if (jobState || opState || remaining || timeStr || completion) {
-            selected = {
+            return {
                 component: key,
                 jobState,
                 opState,
@@ -110,10 +109,13 @@ function extractBestComponentStatus(data) {
                 timeStr,
                 completion,
             };
-            break;
         }
     }
-    return selected || {};
+    return {
+        component: 'none',
+        jobState: 'none',
+        remainingMinutes: 0,
+    };
 }
 
 function mapJobStateToCurrentState(state) {
@@ -123,13 +125,14 @@ function mapJobStateToCurrentState(state) {
         case 'rinse':
         case 'spin':
         case 'run':
-            return 2; // Heating or Cooling
+        case 'running':
+            return 2; // ACTIVE (Heating/Cooling)
         case 'none':
         case 'ready':
         case 'stop':
-            return 0; // Inactive
+            return 0; // INACTIVE
         default:
-            return 1; // Idle
+            return 1; // IDLE
     }
 }
 
