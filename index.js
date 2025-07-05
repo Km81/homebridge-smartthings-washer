@@ -1,4 +1,4 @@
-// index.js v1.1.3 (Washer/Dryer Multi-Component Support)
+// index.js v1.1.4 (Stability & Maintainability Improvments)
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
@@ -35,6 +35,18 @@ class SmartThingsWasherPlatform {
             return;
         }
 
+        // [v1.1.4 개선] 사용자 설정(config.json) 값 검증 강화
+        if (!config.devices || !Array.isArray(config.devices)) {
+            this.log.error("'devices' 설정이 없거나 배열 형식이 아닙니다. config.json을 확인해주세요.");
+            return;
+        }
+        try {
+            new URL(config.redirectUri);
+        } catch (e) {
+            this.log.error(`'redirectUri'가 유효한 URL 형식이 아닙니다: ${config.redirectUri}`);
+            return;
+        }
+
         this.smartthings = new SmartThings(this.log, this.api, this.config);
 
         if (this.api) {
@@ -55,9 +67,11 @@ class SmartThingsWasherPlatform {
         if (this.server) this.server.close();
 
         const listenPort = 8999;
+        const redirectPath = new URL(this.config.redirectUri).pathname;
+
         this.server = http.createServer(async (req, res) => {
             const reqUrl = url.parse(req.url, true);
-            if (req.method === 'GET' && reqUrl.pathname === new url.URL(this.config.redirectUri).pathname) {
+            if (req.method === 'GET' && reqUrl.pathname === redirectPath) {
                 const code = reqUrl.query.code;
                 if (code) {
                     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -148,7 +162,8 @@ class SmartThingsWasherPlatform {
                 const value = await getter();
                 callback(null, value);
             } catch (e) {
-                this.log.error(`[${service.displayName}] ${characteristic.displayName} GET 오류: ${e.message}. 기본값으로 처리합니다.`);
+                // [v1.1.4 개선] 오류 로그에 어떤 특성에서 문제가 발생했는지 명시
+                this.log.error(`[${service.displayName}] '${characteristic.displayName}' GET 오류: ${e.message}. 기본값으로 처리합니다.`);
                 switch (characteristic) {
                     case Characteristic.Active:
                         callback(null, Characteristic.Active.INACTIVE);
@@ -177,7 +192,6 @@ class SmartThingsWasherPlatform {
         ]);
         const ACTIVE_MACHINE_STATES = new Set(['run', 'on']);
 
-        // 컴포넌트의 작동 상태를 확인하는 헬퍼 함수
         const isComponentActive = (component) => {
             if (!component) return false;
             const opState = component.samsungce?.dryerOperatingState || component.samsungce?.washerOperatingState || component.dryerOperatingState || component.washerOperatingState;
@@ -189,7 +203,6 @@ class SmartThingsWasherPlatform {
             return ACTIVE_JOB_STATES.has(jobState) || ACTIVE_MACHINE_STATES.has(machineState);
         };
         
-        // 컴포넌트의 남은 시간을 초 단위로 가져오는 헬퍼 함수
         const getComponentDuration = (component) => {
             if (!component) return 0;
             const opState = component.samsungce?.dryerOperatingState || component.samsungce?.washerOperatingState || component.dryerOperatingState || component.washerOperatingState;
@@ -217,21 +230,20 @@ class SmartThingsWasherPlatform {
             return 0;
         };
 
+        // [v1.1.4 개선] Active/InUse 상태 확인 로직을 공통 함수로 추출 (DRY 원칙)
+        const getDeviceActiveState = async (deviceId) => {
+            const status = await this.smartthings.getStatus(deviceId);
+            const mainComp = status.main;
+            const subComp = status.sub || status['hca.main'];
+            return isComponentActive(mainComp) || isComponentActive(subComp);
+        };
 
         this._bindCharacteristic({
             service,
             characteristic: Characteristic.Active,
             getter: async () => {
-                const status = await this.smartthings.getStatus(deviceId);
-                const mainComp = status.main;
-                const subComp = status.sub || status['hca.main']; // 세탁기는 'sub', 건조기는 'hca.main'
-
-                const mainIsActive = isComponentActive(mainComp);
-                const subIsActive = isComponentActive(subComp);
-
-                return (mainIsActive || subIsActive)
-                    ? Characteristic.Active.ACTIVE
-                    : Characteristic.Active.INACTIVE;
+                const isActive = await getDeviceActiveState(deviceId);
+                return isActive ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
             },
         });
 
@@ -239,16 +251,8 @@ class SmartThingsWasherPlatform {
             service,
             characteristic: Characteristic.InUse,
             getter: async () => {
-                const status = await this.smartthings.getStatus(deviceId);
-                const mainComp = status.main;
-                const subComp = status.sub || status['hca.main'];
-
-                const mainIsActive = isComponentActive(mainComp);
-                const subIsActive = isComponentActive(subComp);
-
-                return (mainIsActive || subIsActive)
-                    ? Characteristic.InUse.IN_USE
-                    : Characteristic.InUse.NOT_IN_USE;
+                const isActive = await getDeviceActiveState(deviceId);
+                return isActive ? Characteristic.InUse.IN_USE : Characteristic.InUse.NOT_IN_USE;
             },
         });
 
@@ -263,7 +267,6 @@ class SmartThingsWasherPlatform {
                 const mainDuration = getComponentDuration(mainComp);
                 const subDuration = getComponentDuration(subComp);
                 
-                // main 우선순위 로직: main이 작동 중이면 main 시간을, 그렇지 않으면 sub 시간을 반환
                 if (mainDuration > 0) {
                     return mainDuration;
                 }
