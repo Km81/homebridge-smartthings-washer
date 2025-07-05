@@ -9,7 +9,7 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
-const PLUGIN_NAME = 'homebridge-smartthings-ac';
+const PLUGIN_NAME = 'homebridge-smartthings-washer';
 const PLATFORM_NAME = 'SmartThingsWasher'; // config.json과 일치
 
 const CONSTANTS = {
