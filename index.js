@@ -1,5 +1,6 @@
-// Samsung Air Conditioner & Washer/Dryer Homebridge Plugin
-// Version 1.1.1 (Component Priority & Multi-Status Support)
+// SmartThings Washer/Dryer Homebridge Plugin
+// Version 1.1.2 (Component Priority & Multi-Status Support)
+
 'use strict';
 
 const tls = require('tls');
@@ -10,12 +11,12 @@ let HAP;
 let Service, Characteristic;
 
 const PLUGIN_NAME = 'homebridge-smartthings-washer';
-const PLATFORM_NAME = 'SmartThingsWasher'; // config.json과 일치
+const PLATFORM_NAME = 'SmartThingsWasher';
 
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '1.1.1',
+    PLUGIN_VERSION: '1.1.2',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -30,10 +31,10 @@ module.exports = (homebridge) => {
     HAP = homebridge.hap;
     Service = HAP.Service;
     Characteristic = HAP.Characteristic;
-    homebridge.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, SamsungACPlatform);
+    homebridge.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, SmartThingsWasher);
 };
 
-class SamsungACPlatform {
+class SmartThingsWasher {
     constructor(log, config, api) {
         this.log = log;
         this.config = config;
@@ -61,7 +62,7 @@ class SamsungACPlatform {
         }
 
         const accessory = new HAP.Accessory('Samsung Device', HAP.uuid.generate(deviceId));
-        const service = accessory.addService(Service.HeaterCooler, 'AC');
+        const service = accessory.addService(Service.HeaterCooler, 'Washer');
 
         const status = extractBestComponentStatus(data);
 
@@ -126,7 +127,7 @@ function mapJobStateToCurrentState(state) {
         case 'spin':
         case 'run':
         case 'running':
-            return 2; // ACTIVE (Heating/Cooling)
+            return 2; // ACTIVE
         case 'none':
         case 'ready':
         case 'stop':
