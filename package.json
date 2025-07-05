@@ -1,6 +1,6 @@
 {
   "name": "homebridge-smartthings-washer",
-  "version": "1.0.10",
+  "version": "1.1.0",
   "description": "SmartThings 세탁기/건조기 상태 모니터링 플러그인 (OAuth2.0 지원)",
   "main": "index.js",
   "scripts": {
