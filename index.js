@@ -54,7 +54,7 @@ class SmartThingsWasherPlatform {
     startAuthServer() {
         if (this.server) this.server.close();
 
-        const listenPort = new url.URL(this.config.redirectUri).port || 8999;
+        const listenPort = 8999;
         this.server = http.createServer(async (req, res) => {
             const reqUrl = url.parse(req.url, true);
             if (req.method === 'GET' && reqUrl.pathname === new url.URL(this.config.redirectUri).pathname) {
