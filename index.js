@@ -1,4 +1,4 @@
-// index.js v1.0.3 (for Washer)
+// index.js v1.0.9 (Washer/Dryer Full Support)
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
@@ -53,7 +53,7 @@ class SmartThingsWasherPlatform {
 
     startAuthServer() {
         if (this.server) this.server.close();
-        
+
         const listenPort = new url.URL(this.config.redirectUri).port || 8999;
         this.server = http.createServer(async (req, res) => {
             const reqUrl = url.parse(req.url, true);
@@ -98,13 +98,13 @@ class SmartThingsWasherPlatform {
         try {
             const stDevices = await this.smartthings.getDevices();
             this.log.info(`총 ${stDevices.length}개의 SmartThings 장치를 발견했습니다.`);
-            
+
             for (const configDevice of this.config.devices) {
                 const targetLabel = normalizeKorean(configDevice.deviceLabel);
                 const foundDevice = stDevices.find(stDevice => normalizeKorean(stDevice.label) === targetLabel);
                 if (foundDevice) {
                     this.log.info(`'${configDevice.deviceLabel}' 장치를 찾았습니다. HomeKit에 추가/갱신합니다.`);
-                    this.addOrUpdateAccessory(foundDevice, configDevice); // configDevice 전달
+                    this.addOrUpdateAccessory(foundDevice, configDevice);
                 } else {
                     this.log.warn(`'${configDevice.deviceLabel}'에 해당하는 장치를 SmartThings에서 찾지 못했습니다.`);
                 }
@@ -114,19 +114,19 @@ class SmartThingsWasherPlatform {
         }
     }
 
-    addOrUpdateAccessory(device, configDevice) { // configDevice 파라미터 추가
+    addOrUpdateAccessory(device, configDevice) {
         const uuid = UUIDGen.generate(device.deviceId);
         let accessory = this.accessories.find(acc => acc.UUID === uuid);
 
         if (accessory) {
             this.log.info(`기존 액세서리 갱신: ${device.label}`);
             accessory.context.device = device;
-            accessory.context.configDevice = configDevice; // context에도 저장
+            accessory.context.configDevice = configDevice;
         } else {
             this.log.info(`새 액세서리 등록: ${device.label}`);
             accessory = new Accessory(device.label, uuid);
             accessory.context.device = device;
-            accessory.context.configDevice = configDevice; // context에도 저장
+            accessory.context.configDevice = configDevice;
             this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
             this.accessories.push(accessory);
         }
@@ -139,7 +139,7 @@ class SmartThingsWasherPlatform {
 
         this.setupValveService(accessory);
     }
-    
+
     _bindCharacteristic({ service, characteristic, getter }) {
         const char = service.getCharacteristic(characteristic);
         char.removeAllListeners('get');
@@ -149,7 +149,7 @@ class SmartThingsWasherPlatform {
                 callback(null, value);
             } catch (e) {
                 this.log.error(`[${service.displayName}] ${characteristic.displayName} GET 오류: ${e.message}. 기본값으로 처리합니다.`);
-                switch(characteristic) {
+                switch (characteristic) {
                     case Characteristic.Active:
                         callback(null, Characteristic.Active.INACTIVE);
                         break;
@@ -171,14 +171,23 @@ class SmartThingsWasherPlatform {
         const service = accessory.getService(Service.Valve) || accessory.addService(Service.Valve, accessory.displayName);
         service.setCharacteristic(Characteristic.ValveType, Characteristic.ValveType.IRRIGATION);
 
+        const ACTIVE_JOB_STATES = new Set([
+            'running', 'drying', 'cooling',         // Dryer
+            'washing', 'rinse', 'spin', 'detergentSupply' // Washer
+        ]);
+        const ACTIVE_MACHINE_STATES = new Set(['run', 'on']);
+
         this._bindCharacteristic({
             service,
             characteristic: Characteristic.Active,
             getter: async () => {
                 const status = await this.smartthings.getStatus(deviceId);
-                const opState = status.washerOperatingState || status.dryerOperatingState;
-                const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
-                return jobState === 'running' ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+                const opState = status.samsungce?.dryerOperatingState || status.dryerOperatingState || status.samsungce?.washerOperatingState || status.washerOperatingState;
+                const jobState = opState?.dryerJobState?.value || opState?.washerJobState?.value;
+                const machineState = opState?.machineState?.value;
+                return (ACTIVE_JOB_STATES.has(jobState) || ACTIVE_MACHINE_STATES.has(machineState))
+                    ? Characteristic.Active.ACTIVE
+                    : Characteristic.Active.INACTIVE;
             },
         });
 
@@ -186,10 +195,13 @@ class SmartThingsWasherPlatform {
             service,
             characteristic: Characteristic.InUse,
             getter: async () => {
-                 const status = await this.smartthings.getStatus(deviceId);
-                 const opState = status.washerOperatingState || status.dryerOperatingState;
-                 const jobState = opState?.washerJobState?.value || opState?.dryerJobState?.value;
-                 return jobState === 'running' ? Characteristic.InUse.IN_USE : Characteristic.InUse.NOT_IN_USE;
+                const status = await this.smartthings.getStatus(deviceId);
+                const opState = status.samsungce?.dryerOperatingState || status.dryerOperatingState || status.samsungce?.washerOperatingState || status.washerOperatingState;
+                const jobState = opState?.dryerJobState?.value || opState?.washerJobState?.value;
+                const machineState = opState?.machineState?.value;
+                return (ACTIVE_JOB_STATES.has(jobState) || ACTIVE_MACHINE_STATES.has(machineState))
+                    ? Characteristic.InUse.IN_USE
+                    : Characteristic.InUse.NOT_IN_USE;
             },
         });
 
@@ -198,11 +210,9 @@ class SmartThingsWasherPlatform {
             characteristic: Characteristic.RemainingDuration,
             getter: async () => {
                 const status = await this.smartthings.getStatus(deviceId);
-                const opState = status.washerOperatingState || status.dryerOperatingState;
-                const completionTimeStr = opState?.completionTime?.value;
-                if (!completionTimeStr) return 0;
-                const remainingSeconds = Math.round((new Date(completionTimeStr) - Date.now()) / 1000);
-                return remainingSeconds > 0 ? remainingSeconds : 0;
+                const opState = status.samsungce?.dryerOperatingState || status.dryerOperatingState || status.samsungce?.washerOperatingState || status.washerOperatingState;
+                const remainingMin = opState?.remainingTime?.value;
+                return typeof remainingMin === 'number' && remainingMin > 0 ? remainingMin * 60 : 0;
             },
         });
     }
