@@ -60,13 +60,13 @@ SmartThings는 보안 정책상 **`https`로 시작하는 주소만** Redirect U
     * **소스 (Source):**
         * 프로토콜: `HTTPS`
         * 호스트 이름: `*` 또는 나의 DDNS 주소 (예: `myhome.myds.me`)
-        * 포트: 외부에서 사용할 포트 (예: `9002`)
+        * 포트: 외부에서 사용할 포트 (예: `9001`)
     * **대상 (Destination):**
         * 프로토콜: `HTTP`
         * 호스트 이름: Homebridge가 설치된 기기의 내부 IP 주소 (예: `192.168.1.10`)
         * 포트: **`8999` (고정)**
-3.  설정을 저장합니다. 이제 외부 `https://myhome.myds.me:9002` 로 들어온 요청은 내부 `http://192.168.1.10:8999` 로 전달됩니다.
-4.  **다시 1단계의 SmartThings 개발자 설정**으로 돌아가 `Redirect URIs` 항목에 방금 설정한 외부 주소(`https://myhome.myds.me:9002`)를 추가하고 저장합니다.
+3.  설정을 저장합니다. 이제 외부 `https://myhome.myds.me:9001` 로 들어온 요청은 내부 `http://192.168.1.10:8999` 로 전달됩니다.
+4.  **다시 1단계의 SmartThings 개발자 설정**으로 돌아가 `Redirect URIs` 항목에 방금 설정한 외부 주소(`https://myhome.myds.me:9001`)를 추가하고 저장합니다.
 
 ### 3단계: Homebridge 설정 (`config.json`)
 
@@ -76,7 +76,7 @@ SmartThings는 보안 정책상 **`https`로 시작하는 주소만** Redirect U
   "name": "SmartThings Laundry",
   "clientId": "YOUR_CLIENT_ID",
   "clientSecret": "YOUR_CLIENT_SECRET",
-  "redirectUri": "[https://myhome.myds.me:9002](https://myhome.myds.me:9002)",
+  "redirectUri": "[https://myhome.myds.me:9001](https://myhome.myds.me:9001)",
   "devices": [
     {
       "deviceLabel": "세탁기"
