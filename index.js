@@ -1,4 +1,4 @@
-// index.js v1.0.9 (Washer/Dryer Full Support)
+// index.js v1.0.10 (Washer/Dryer Full Support + 정확한 남은 시간 반영)
 'use strict';
 
 const SmartThings = require('./lib/SmartThings');
@@ -182,7 +182,7 @@ class SmartThingsWasherPlatform {
             characteristic: Characteristic.Active,
             getter: async () => {
                 const status = await this.smartthings.getStatus(deviceId);
-                const opState = status.samsungce?.dryerOperatingState || status.dryerOperatingState || status.samsungce?.washerOperatingState || status.washerOperatingState;
+                const opState = status.samsungce?.dryerOperatingState || status.samsungce?.washerOperatingState || status.dryerOperatingState || status.washerOperatingState;
                 const jobState = opState?.dryerJobState?.value || opState?.washerJobState?.value;
                 const machineState = opState?.machineState?.value;
                 return (ACTIVE_JOB_STATES.has(jobState) || ACTIVE_MACHINE_STATES.has(machineState))
@@ -196,7 +196,7 @@ class SmartThingsWasherPlatform {
             characteristic: Characteristic.InUse,
             getter: async () => {
                 const status = await this.smartthings.getStatus(deviceId);
-                const opState = status.samsungce?.dryerOperatingState || status.dryerOperatingState || status.samsungce?.washerOperatingState || status.washerOperatingState;
+                const opState = status.samsungce?.dryerOperatingState || status.samsungce?.washerOperatingState || status.dryerOperatingState || status.washerOperatingState;
                 const jobState = opState?.dryerJobState?.value || opState?.washerJobState?.value;
                 const machineState = opState?.machineState?.value;
                 return (ACTIVE_JOB_STATES.has(jobState) || ACTIVE_MACHINE_STATES.has(machineState))
@@ -210,9 +210,29 @@ class SmartThingsWasherPlatform {
             characteristic: Characteristic.RemainingDuration,
             getter: async () => {
                 const status = await this.smartthings.getStatus(deviceId);
-                const opState = status.samsungce?.dryerOperatingState || status.dryerOperatingState || status.samsungce?.washerOperatingState || status.washerOperatingState;
+                const ceOpState = status.samsungce?.dryerOperatingState || status.samsungce?.washerOperatingState;
+                const opState = ceOpState || status.dryerOperatingState || status.washerOperatingState;
+
                 const remainingMin = opState?.remainingTime?.value;
-                return typeof remainingMin === 'number' && remainingMin > 0 ? remainingMin * 60 : 0;
+                if (typeof remainingMin === 'number' && remainingMin > 0) {
+                    return remainingMin * 60;
+                }
+
+                const completionTimeStr = opState?.completionTime?.value;
+                if (completionTimeStr) {
+                    const remainingSec = Math.round((new Date(completionTimeStr) - Date.now()) / 1000);
+                    return remainingSec > 0 ? remainingSec : 0;
+                }
+
+                const timeStr = opState?.remainingTimeStr?.value;
+                if (typeof timeStr === 'string' && timeStr.includes(':')) {
+                    const [minStr, secStr] = timeStr.split(':');
+                    const min = parseInt(minStr) || 0;
+                    const sec = parseInt(secStr) || 0;
+                    return min * 60 + sec;
+                }
+
+                return 0;
             },
         });
     }
